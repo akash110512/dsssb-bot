@@ -18,12 +18,13 @@ current_question = {}
 user_score = {}
 wrong_questions = {}
 
+# START COMMAND
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Send a CSV file with MCQ questions.\nThen type /practice"
     )
 
-
+# LOAD CSV
 async def load_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global questions
 
@@ -37,9 +38,8 @@ async def load_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{len(questions)} questions loaded.\nType /practice"
     )
 
-
+# SEND QUESTION
 async def practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if not questions:
         await update.message.reply_text("Please send a CSV file first.")
         return
@@ -69,14 +69,16 @@ async def practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-
+# CHECK ANSWER
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     query = update.callback_query
     await query.answer()
 
     user = query.from_user.id
     choice = query.data
+
+    if user not in current_question:
+        return
 
     q = current_question[user]
 
@@ -94,13 +96,13 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         wrong_questions[user].append(q)
 
-    msg += f"\nScore: {user_score[user]}"
+    msg += f"\n\nScore: {user_score[user]}"
+    msg += "\n\nType /practice for next question"
 
     await query.edit_message_text(msg)
 
-
+# WRONG QUESTIONS PRACTICE
 async def wrong(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     user = update.effective_user.id
 
     if user not in wrong_questions or not wrong_questions[user]:
@@ -130,7 +132,7 @@ async def wrong(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-
+# MAIN BOT
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
