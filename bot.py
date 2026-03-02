@@ -2,46 +2,38 @@ import os
 import random
 import pandas as pd
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    filters
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-questions = []
 current_question = {}
 user_score = {}
 wrong_questions = {}
 
-# START COMMAND
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Send a CSV file with MCQ questions.\nThen type /practice"
-    )
+def get_questions():
+    if not os.path.exists("questions.csv"):
+        return []
+    df = pd.read_csv("questions.csv")
+    return df.to_dict("records")
 
-# LOAD CSV
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Send CSV file with MCQ questions.\nThen type /practice")
+
 async def load_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global questions
 
     file = await update.message.document.get_file()
     await file.download_to_drive("questions.csv")
 
     df = pd.read_csv("questions.csv")
-    questions = df.to_dict("records")
 
-    await update.message.reply_text(
-        f"{len(questions)} questions loaded.\nType /practice"
-    )
+    await update.message.reply_text(f"{len(df)} questions loaded.\nType /practice")
 
-# SEND QUESTION
 async def practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    questions = get_questions()
+
     if not questions:
-        await update.message.reply_text("Please send a CSV file first.")
+        await update.message.reply_text("Please send CSV file first.")
         return
 
     user = update.effective_user.id
@@ -64,13 +56,10 @@ async def practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"D. {q['Option D']}"
     )
 
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# CHECK ANSWER
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
     await query.answer()
 
@@ -97,12 +86,12 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         wrong_questions[user].append(q)
 
     msg += f"\n\nScore: {user_score[user]}"
-    msg += "\n\nType /practice for next question"
+    msg += "\n\nType /practice"
 
     await query.edit_message_text(msg)
 
-# WRONG QUESTIONS PRACTICE
 async def wrong(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     user = update.effective_user.id
 
     if user not in wrong_questions or not wrong_questions[user]:
@@ -127,18 +116,13 @@ async def wrong(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"D. {q['Option D']}"
     )
 
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# MAIN BOT
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("practice", practice))
 app.add_handler(CommandHandler("wrong", wrong))
-
 app.add_handler(MessageHandler(filters.Document.ALL, load_csv))
 app.add_handler(CallbackQueryHandler(answer))
 
