@@ -1,41 +1,22 @@
 import os
 import random
 import pandas as pd
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    filters
-)
+from io import StringIO
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 TOKEN = os.getenv("BOT_TOKEN")
 
 questions = []
-used_questions = {}
-current_question = {}
-user_score = {}
-wrong_questions = {}
+user_data = {}
 leaderboard = {}
 
 # START
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📚 Welcome to MCQ Practice Bot\n\n"
-        "Commands:\n"
-        "/practice - Start test\n"
-        "/wrong - Retry wrong questions\n"
-        "/leaderboard - Top scores\n"
-        "/result - Show score\n"
-        "/polltest - Quiz poll mode\n\n"
-        "Send CSV file or CSV text to load questions."
+        "Send a CSV file OR paste CSV text.\nThen type /practice"
     )
+
 
 # LOAD CSV FILE
 async def load_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -45,68 +26,86 @@ async def load_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await file.download_to_drive("questions.csv")
 
     df = pd.read_csv("questions.csv")
+
+    df["Answer"] = df["Answer"].astype(str).str.strip().str.replace('"','').str.upper()
+
     questions = df.to_dict("records")
 
-    await update.message.reply_text(
-        f"✅ {len(questions)} questions loaded.\nType /practice"
-    )
+    await update.message.reply_text(f"{len(questions)} questions loaded.\nType /practice")
+
 
 # LOAD CSV TEXT
-async def load_csv_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def load_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global questions
 
-    try:
-        text = update.message.text.strip().split("\n")
+    text = update.message.text
 
-        if "Question" not in text[0]:
-            return
+    if "Question" not in text:
+        return
 
-        rows = [row.split(",") for row in text[1:]]
+    df = pd.read_csv(StringIO(text))
 
-        questions = []
+    df["Answer"] = df["Answer"].astype(str).str.strip().str.replace('"','').str.upper()
 
-        for r in rows:
-            questions.append({
-                "Question": r[0],
-                "Option A": r[1],
-                "Option B": r[2],
-                "Option C": r[3],
-                "Option D": r[4],
-                "Answer": r[5]
-            })
+    questions = df.to_dict("records")
 
-        await update.message.reply_text(
-            f"✅ {len(questions)} questions loaded from text."
-        )
+    await update.message.reply_text(f"{len(questions)} questions loaded.\nType /practice")
 
-    except:
-        pass
+
+# START PRACTICE
+async def practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not questions:
+        await update.message.reply_text("Please send CSV first.")
+        return
+
+    user = update.effective_user.id
+    name = update.effective_user.first_name
+
+    user_data[user] = {
+        "name": name,
+        "remaining": questions.copy(),
+        "score": 0,
+        "wrong": [],
+        "total": len(questions),
+        "asked": 0
+    }
+
+    await send_question(update, context, user)
+
 
 # SEND QUESTION
 async def send_question(update, context, user):
 
-    if user not in used_questions:
-        used_questions[user] = []
+    data = user_data[user]
 
-    remaining = [q for q in questions if q not in used_questions[user]]
+    if not data["remaining"]:
 
-    if not remaining:
-        await update.message.reply_text(
-            f"🏁 Test Finished!\nScore: {user_score.get(user,0)}"
-        )
+        correct = data["score"]
+        total = data["total"]
+        wrong = total - correct
 
-        leaderboard[user] = user_score.get(user,0)
+        leaderboard[data["name"]] = correct
 
-        await update.message.reply_text(
-            "Type /wrong to retry wrong questions\n"
-            "Type /leaderboard"
+        await context.bot.send_message(
+            chat_id=user,
+            text=(
+                f"📊 Test Finished\n\n"
+                f"Total Questions: {total}\n"
+                f"Correct: {correct}\n"
+                f"Wrong: {wrong}\n"
+                f"Score: {correct}\n\n"
+                f"Type /wrong to retry wrong questions\n"
+                f"Type /leaderboard"
+            )
         )
         return
 
-    q = random.choice(remaining)
+    q = random.choice(data["remaining"])
+    data["remaining"].remove(q)
 
-    used_questions[user].append(q)
-    current_question[user] = q
+    data["current"] = q
+    data["asked"] += 1
 
     keyboard = [
         [InlineKeyboardButton("A", callback_data="A"),
@@ -116,6 +115,7 @@ async def send_question(update, context, user):
     ]
 
     text = (
+        f"Question {data['asked']} / {data['total']}\n\n"
         f"{q['Question']}\n\n"
         f"A. {q['Option A']}\n"
         f"B. {q['Option B']}\n"
@@ -123,25 +123,12 @@ async def send_question(update, context, user):
         f"D. {q['Option D']}"
     )
 
-    await update.message.reply_text(
-        text,
+    await context.bot.send_message(
+        chat_id=user,
+        text=text,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# PRACTICE TEST
-async def practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if not questions:
-        await update.message.reply_text("Send CSV first.")
-        return
-
-    user = update.effective_user.id
-
-    user_score[user] = 0
-    used_questions[user] = []
-    wrong_questions[user] = []
-
-    await send_question(update, context, user)
 
 # ANSWER HANDLER
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -150,66 +137,47 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     user = query.from_user.id
-    choice = query.data
 
-    q = current_question[user]
+    data = user_data[user]
+    q = data["current"]
 
-    correct = q["Answer"].strip().upper()
+    choice = query.data.strip().upper()
+    correct = str(q["Answer"]).strip().upper()
 
     if choice == correct:
 
-        user_score[user] += 1
-        msg = f"✅ Correct\nScore: {user_score[user]}"
+        data["score"] += 1
+        msg = f"✅ Correct\nScore: {data['score']}"
 
     else:
 
-        msg = f"❌ Wrong\nCorrect answer: {correct}\nScore: {user_score[user]}"
+        msg = f"❌ Wrong\nCorrect answer: {correct}\nScore: {data['score']}"
+        data["wrong"].append(q)
 
-        wrong_questions[user].append(q)
+    await context.bot.send_message(
+        chat_id=user,
+        text=msg
+    )
 
-    await query.message.reply_text(msg)
+    await send_question(update, context, user)
 
-    await send_question(query.message, context, user)
 
-# WRONG QUESTIONS
+# WRONG PRACTICE
 async def wrong(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user.id
 
-    if user not in wrong_questions or not wrong_questions[user]:
+    if user not in user_data or not user_data[user]["wrong"]:
         await update.message.reply_text("No wrong questions.")
         return
 
-    q = random.choice(wrong_questions[user])
-    current_question[user] = q
+    user_data[user]["remaining"] = user_data[user]["wrong"].copy()
+    user_data[user]["wrong"] = []
+    user_data[user]["total"] = len(user_data[user]["remaining"])
+    user_data[user]["asked"] = 0
 
-    keyboard = [
-        [InlineKeyboardButton("A", callback_data="A"),
-         InlineKeyboardButton("B", callback_data="B")],
-        [InlineKeyboardButton("C", callback_data="C"),
-         InlineKeyboardButton("D", callback_data="D")]
-    ]
+    await send_question(update, context, user)
 
-    text = (
-        f"{q['Question']}\n\n"
-        f"A. {q['Option A']}\n"
-        f"B. {q['Option B']}\n"
-        f"C. {q['Option C']}\n"
-        f"D. {q['Option D']}"
-    )
-
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-# RESULT
-async def result(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    user = update.effective_user.id
-    score = user_score.get(user,0)
-
-    await update.message.reply_text(f"📊 Score: {score}")
 
 # LEADERBOARD
 async def leaderboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -218,46 +186,31 @@ async def leaderboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No scores yet.")
         return
 
-    sorted_scores = sorted(
-        leaderboard.items(),
-        key=lambda x: x[1],
-        reverse=True
-    )
-
     text = "🏆 Leaderboard\n\n"
 
-    for i,(u,s) in enumerate(sorted_scores[:10],1):
-        text += f"{i}. {s}\n"
+    sorted_scores = sorted(leaderboard.items(), key=lambda x: x[1], reverse=True)
+
+    for i, (name, score) in enumerate(sorted_scores[:10], start=1):
+        text += f"{i}. {name} — {score}\n"
 
     await update.message.reply_text(text)
 
-# POLL QUIZ MODE
-async def polltest(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if not questions:
-        await update.message.reply_text("Upload questions first.")
+# RESULT
+async def result(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user = update.effective_user.id
+
+    if user not in user_data:
+        await update.message.reply_text("No test running.")
         return
 
-    q = random.choice(questions)
+    score = user_data[user]["score"]
 
-    options = [
-        q["Option A"],
-        q["Option B"],
-        q["Option C"],
-        q["Option D"]
-    ]
+    await update.message.reply_text(f"📊 Current Score: {score}")
 
-    correct_index = ["A","B","C","D"].index(q["Answer"])
 
-    await update.message.reply_poll(
-        question=q["Question"],
-        options=options,
-        type="quiz",
-        correct_option_id=correct_index,
-        is_anonymous=False
-    )
-
-# APP
+# MAIN
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
@@ -265,10 +218,9 @@ app.add_handler(CommandHandler("practice", practice))
 app.add_handler(CommandHandler("wrong", wrong))
 app.add_handler(CommandHandler("leaderboard", leaderboard_cmd))
 app.add_handler(CommandHandler("result", result))
-app.add_handler(CommandHandler("polltest", polltest))
 
 app.add_handler(MessageHandler(filters.Document.ALL, load_csv))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, load_csv_text))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, load_text))
 
 app.add_handler(CallbackQueryHandler(answer))
 
