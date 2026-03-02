@@ -23,6 +23,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Send a CSV file with MCQ questions.\nThen type /practice"
     )
 
+
 async def load_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global questions
 
@@ -36,7 +37,9 @@ async def load_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{len(questions)} questions loaded.\nType /practice"
     )
 
+
 async def practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     if not questions:
         await update.message.reply_text("Please send a CSV file first.")
         return
@@ -66,7 +69,9 @@ async def practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
     await query.answer()
 
@@ -93,7 +98,9 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(msg)
 
+
 async def wrong(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     user = update.effective_user.id
 
     if user not in wrong_questions or not wrong_questions[user]:
@@ -122,6 +129,7 @@ async def wrong(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
 
 app = ApplicationBuilder().token(TOKEN).build()
 
